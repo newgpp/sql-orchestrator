@@ -1,135 +1,151 @@
-# DEV_NOTES
+# DEV_NOTES — sql-orchestrator
 
 > 项目内部开发记录（非对外文档）  
-> 用于保存当前进度、关键决策与下一步计划，确保开发中断后可快速恢复上下文。
+> 用于在 **中断 / 新会话 / 跨环境** 后快速恢复完整上下文  
+> 本文件是本项目的 **唯一决策真相源**
 
 ---
 
-## 项目概览
+## 如何恢复上下文（重要）
 
-- 项目名称：**sql-orchestrator**
-- 职责定位：
-  - 将自然语言查询编排（orchestrate）为可解释、可校验的 SQL
-  - 支持交互式追问（clarify），而非一次性黑盒生成
-- 对应前端：
-  - 前端项目：`sql-copilot-ui`
-  - 前后端通过 `/api/chat` 交互，协议严格对齐
+- 本项目所有**关键技术决策**以本文件为准  
+- 新会话 / 新协作者 / AI 助手：
+  1. **先完整阅读本文件**
+  2. 再继续开发
+- 未在本文件中出现的方案：
+  - 视为 **未开始** 或 **已否定**
+- 本项目刻意 **分阶段推进**，不要提前引入 LLM / Embedding
 
 ---
 
-## 本地开发环境
+## 一、项目总览
 
-- OS：macOS
-- Python：3.9.6
-- 虚拟环境：`venv`
-- 后端端口：`8000`
-- 前端端口：`5173`
+### 项目名称
+**sql-orchestrator**
+
+### 职责定位
+- 将**自然语言查询**编排（orchestrate）为：
+  - 可解释
+  - 可校验
+  - 可交互澄清（clarify）
+  的 SQL
+- 明确目标：
+  - ❌ 非一次性黑盒 Text-to-SQL
+  - ✅ 有状态 / 可追问 / 可解释
+
+### 前后端关系
+- 前端项目：`sql-copilot-ui`
+- 通信方式：
+  - POST `/api/chat`
+  - 协议 **严格对齐**（前后端共享模型语义）
+
+---
+
+## 二、开发环境
+
+### 本地环境（已验证）
+
+- OS：macOS / Windows
+- Python：
+  - macOS：3.9.6
+  - Windows：3.13.x
+- 虚拟环境：`.venv`
+- Backend Port：`8000`
+- Frontend Port：`5173`
 
 ### 虚拟环境
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-
 ```
 
-### 提示词
+## 三、Backend 当前完成状态（可联调）
+
+### ✅ 已完成能力
+
+#### 1️⃣ FastAPI 基础
+- 服务可在 macOS / Windows 启动
+- `/health`、`/docs` 可访问
+- 已配置 CORS（支持 OPTIONS 预检）
+
+#### 2️⃣ 强类型交互协议（Pydantic v2）
+- `models/interaction.py` 是前后端协议真相源
+- 定义：
+  - `ChatRequest`
+  - `ChatResponse`（discriminated union）：
+    - `clarify`
+    - `sql`
+    - `blocked`
+
+#### 3️⃣ `/api/chat` v0.1（Demo）
+- 行为：
+  - 无 answers → 返回 `type=clarify`
+  - 有 `answers.metric` → 返回 `type=sql`
+- 当前示例：
+  - 销售额口径（订单金额 vs 实付金额）
+
+#### 4️⃣ Session 记忆（可关闭）
+- `InMemorySessionStore`
+- 支持：
+  - session_id 自动生成 / 复用
+  - last_user_message / answers / pending_clarify
+  - pending clarify 状态机（防止乱写 answers）
+- 环境变量控制：
+  - `SESSION_MEMORY_ENABLED=true|false`
+- `/health` 会返回当前 memory 状态
+
+#### 5️⃣ SQL Response Explanation
+- `SqlResponse` 已包含结构化 explanation：
+  - summary
+  - tables
+  - joins
+  - select
+  - filters
+  - group_by / order_by / limit
+- explanation 设计目标：
+  - 直接支持前端 SqlPanel 渲染
+  - 明确 join 与口径来源
+
+---
+
+## 四、数据库 Schema & Seed 设计（已完成）
+
+### 设计目标
+为 Text-to-SQL + Clarify 提供：
+- 真实业务分布
+- 明确业务语义
+- **可被程序与 LLM 理解的 Schema**
+
+### 核心决策（已定）
+
+#### 1️⃣ 不使用物理外键（FOREIGN KEY）
+- 关联关系 **不通过数据库约束**
+- 全部通过字段 COMMENT 表达
+- 原因：
+  - BI / 分析型查询不依赖 FK
+  - FK 会限制脏数据 / 多 join 路径测试
+  - LLM 需要“解释语义”，不是“强约束”
+
+#### 2️⃣ 关联关系统一写入 COMMENT
 
 ```text
-按 sql-orchestrator 的 DEV_NOTES.md 继续
+<描述> | ref=table.column | join=N:1 | role=fact|dimension|bridge
 ```
+- 扩展标签：
+  - `metric=`：指标口径
+  - `semantic=`：业务语义（gmv / sales 等）
+  - `time=event`：事件时间字段
 
----
+#### 3️⃣ 数据库即元数据源
 
-## 当前完成状态（Backend）
+- schema + column COMMENT 是 唯一权威
 
-### ✅ 已完成（可联调）
+- schema_cards 完全由数据库自动生成
 
-- FastAPI 服务可启动（Windows / macOS）
-- `/health`、`/docs` 可用
-- 已配置 CORS（支持前端跨域预检 OPTIONS）
-- 已实现强类型交互协议（Pydantic v2）：
-  - `models/interaction.py`
-  - `ChatRequest`
-  - `ChatResponse`（discriminated union：clarify/sql/blocked）
-- `/api/chat` v0.1（hardcode demo）已完成：
-  - 无 answers → 返回 `type=clarify`（销售额口径 single_select）
-  - 带 `answers.metric` → 返回 `type=sql`（包含 sql/dialect/validation，可扩展 explanation）
-- 已引入 Session 记忆（InMemorySessionStore）：
-  - session_id 自动生成（无则生成，有则复用）
-  - 可保存 last_user_message、answers、last_clarify
-  - 支持 TTL 清理（可选）
-- 已实现 pending clarify 状态机（防止答案乱写入）：
-  - `pending_clarify_type`
-  - `pending_fields`
-  - 仅在 pending 时接收 answers 并写入 session
-  - 生成 SQL 后清理 pending
-- SqlResponse 已补全 explanation（结构化）：
-  - summary / tables / joins / select / filters / group_by / order_by / limit
-  - data_type 支持 logical_type（string/number/date_range 等）
-  - 便于前端渲染 explanation 面板与 join 解释
+- 不依赖 LLM 猜 join / 口径
 
-### ✅ 新增：Session 记忆开关（可禁用）
-
-- 支持通过环境变量控制是否启用记忆：
-  - `SESSION_MEMORY_ENABLED=true|false`
-- Memory OFF（stateless）模式行为：
-  - 不读写 session，不启用 pending
-  - 每次请求只依赖本次 payload（answers 仅本次有效）
-- `/health` 会返回 `session_memory_enabled` 便于验证
-
----
-
-## 当前目录结构（Backend 关键文件）
-
-- `sql_orchestrator/models/interaction.py`：前后端协议真相源（Pydantic）
-- `sql_orchestrator/api/chat.py`：POST /api/chat（demo + 可联调逻辑）
-- `sql_orchestrator/services/session.py`：InMemorySessionStore + pending 支持
-- `sql_orchestrator/config/settings.py`：Settings（SESSION_MEMORY_ENABLED 开关）
-- `sql_orchestrator/main.py`：FastAPI 入口 + CORS + store 注入
-
----
-
-## 下一步计划（建议顺序）
-
-1. 让 `sql` 响应补全 `explanation`（tables/joins/filters/select 等），对齐前端 SqlPanel 展示
-2. 将 demo 逻辑从 API 层抽离到 `orchestrator/`：
-   - `conversation.py`（状态机/决策）
-   - `clarify.py`（追问生成）
-3. 引入真实 metadata/schema（先本地 JSON，再接数据库采集）
-4. 再接 Embedding/Qdrant + LLM（adapter 化）
-
-
-## 数据库 Schema & Seed 设计阶段总结（2026-01）
-
-### 背景
-为了支持 Text-to-SQL + 交互式 Clarify（口径追问、join 解释、指标歧义），数据库不仅需要“能查”，还必须具备**可被 LLM / RAG 理解的业务语义**。
-
-### 关键架构决策
-1. **不使用物理外键（FOREIGN KEY）**
-   - 关联关系不通过数据库约束，而通过字段注释中的语义表达
-   - 原因：
-     - BI / 分析型场景不依赖 FK
-     - FK 会限制造数、脏数据测试、多 join 路径探索
-     - LLM 需要“解释语义”，而不是“强约束”
-
-2. **关联关系全部写入 COMMENT**
-   - 统一注释规范：
-     ```
-     <描述> | ref=table.column | join=N:1 | role=fact|dimension|bridge
-     ```
-   - 扩展标签：
-     - `metric=`：指标口径
-     - `semantic=`：业务语义（gmv / sales 等）
-     - `time=event`：事件时间字段
-
-3. **数据库即元数据源（Schema = Cards 原材料）**
-   - schema + column COMMENT 是 schema_cards 的权威来源
-   - 不依赖 LLM 猜测 join / 口径
-
----
-
-### 已完成内容
+### schema测试数据
 
 #### 1️⃣ Schema（001_schema.sql）
 - 完整无 FK 版本
@@ -145,6 +161,7 @@ source .venv/bin/activate
 - 保留必要索引（created_at / paid_at / customer_id 等）
 
 #### 2️⃣ Seed 数据（002_seed.sql，方案 B）
+
 - 数据规模：
   - ~300 客户
   - ~120 商品
@@ -167,105 +184,85 @@ source .venv/bin/activate
   - 口径 Clarify（订单金额 vs 实付金额）
   - 多 join / left join / group by / TopN
 
----
 
-### 当前价值
-- 数据库已具备：
-  - **真实业务分布**
-  - **可解释 schema**
-  - **适合 Text-to-SQL + Clarify 的训练/验证环境**
-- 后续：
-  - schema_cards 可自动从 information_schema + COMMENT 生成
-  - Qdrant / Embedding 仅是“检索层替换”，不会推翻设计
+## 五、Schema Cards（元数据地基，已完成）
 
----
-
-## Schema Cards 导出 & 校验（阶段性完成）
-
-### 背景
-在进入 Text-to-SQL / LLM 之前，优先解决「Schema 是否**可解释、可验证、可连通**」的问题，避免后续 SQL 生成依赖模型猜测 join 和业务语义。
+### 目标
+在引入 LLM 前，彻底解决：
+- Schema 是否可解释
+- 注释是否自洽
+- Join 是否真实可达
 
 ### 设计原则
-- **现阶段不工程化**：全部采用单文件脚本（tools/），降低复杂度
-- **数据库即元数据源**：
-  - 表/字段 COMMENT 是唯一权威
-  - 不使用物理外键（FK），所有关联通过注释表达
-- **测试驱动验证**：所有关键能力都必须能通过 tests 触发
+- **现阶段不工程化**
+- 全部使用单文件脚本（`tools/`）
+- 所有能力必须能通过 `tests/` 触发
 
 ---
 
 ### 已完成能力
 
-#### 1️⃣ Schema Cards 导出（tools/export_schema_cards.py）
-- 单文件实现，配置全部来自 env
-- 从 information_schema 自动抽取：
+#### 1️⃣ Schema Cards 导出
+- `tools/export_schema_cards.py`
+- 从 information_schema 自动生成 `schema_cards.json`
+- 内容：
   - 表 / 字段 / 索引
-  - COMMENT 解析（description + tags）
-  - ref / join / role / metric / semantic / time
-- 生成 `schema_cards.json`，包含：
-  - tables（列级元数据）
-  - relations（由 ref 聚合的 join 关系）
-- 支持轻量 profiling（可开关）：
+  - COMMENT → description + tags
+  - relations（由 ref 聚合）
+- 支持 profiling（可关）：
   - null_ratio / distinct_count
-  - 数值 min/max/avg
-  - 时间 min/max
-  - top values（示例值）
-- 可直接运行或通过 pytest 触发
+  - min / max / avg
+  - top values
 
-#### 2️⃣ Schema Cards 结构校验（tools/validate_schema_cards.py）
-- 校验项：
-  - ref 指向的表/字段是否存在
-  - join 是否为合法值（N:1 / 1:N / 1:1 / N:N）
-  - role 是否合法（fact / dimension / bridge）
-  - 列级 ref 必须配 join
-- 表级提示：
-  - 若表内无任何 role 标注，给 warning
+#### 2️⃣ Schema Cards 结构校验
+- `tools/validate_schema_cards.py`
+- 校验：
+  - ref 指向存在性
+  - join / role 合法性
+  - ref 必须配 join
+- 表级 role 缺失给 warning
 - CLI + pytest 双入口
-- 确保 schema 注释本身是“自洽的”
 
-#### 3️⃣ Join Path 可达性校验（tools/validate_join_paths.py）
-- 从指定事实表（默认 `fact_order`）出发：
-  - 构建 join 无向图
-  - BFS 校验所有 dimension 表是否可达
-- 支持 env 指定 root fact（ROOT_FACT_TABLE）
-- 输出：
-  - 不可达维表清单
-  - 总表数 / 可达表数
-- CLI 负责 exit code
-- 提供 `run()` 方法供 tests 调用（不 sys.exit）
+#### 3️⃣ Join Path 可达性校验
+- `tools/validate_join_paths.py`
+- 从 root fact（默认 `fact_order`）出发：
+  - 构建 join 图
+  - BFS 校验所有 dimension 是否可达
+- 支持 env 指定 root fact（`ROOT_FACT_TABLE`）
+- 提供：
+  - CLI（exit code）
+  - `run()` 方法供 tests 调用（不 `sys.exit`）
 
 #### 4️⃣ Tests 覆盖
 - `tests/test_export_schema_cards.py`
-  - 触发导出
-  - 校验 schema_cards.json 生成成功
 - `tests/test_validate_schema_cards.py`
-  - 校验 schema_cards 结构正确性
 - `tests/test_validate_join_paths.py`
-  - 触发 join path 校验
-  - 确保所有 dimension 从 root fact 可达
-- tests 内通过显式 `sys.path` 注入 root，避免工程化依赖
+- tests 内通过 `sys.path` 注入 root（避免工程化）
 
 ---
 
-### 当前状态总结
+## 六、当前状态总结
+
 - ✅ schema → 可解释（COMMENT + tags）
 - ✅ schema → 可验证（结构 / join / role）
 - ✅ schema → 可连通（join path reachability）
-- ❌ 尚未进入 LLM / embedding / SQL 生成阶段（刻意延后）
+- ❌ 尚未进入 LLM / Embedding / SQL 生成阶段（刻意延后）
 
-这一阶段结束后，**LLM 不需要猜 join，不需要猜口径，只负责“编排”**。
+**结论：**
+> LLM 不需要猜 join、不需要猜口径，只负责“编排”
 
 ---
 
-### 下一步（已明确，但未开始）
-- 生成 `schema_cards_for_llm.json`（精简视图）
-  - 去掉 profiling 噪音
-  - 保留表/字段描述、tags、relations、少量示例值
-- 基于 schema_cards 做 SQL 编排（非直接生成）
-- 再引入 embedding / 向量检索（Qdrant）
+## 七、下一阶段入口（未开始）
 
-> 今日到此为止，schema 元数据地基已打牢。
-
+### 严格执行顺序
+1. 生成 `schema_cards_for_llm.json`
+   - 精简视图
+   - 去掉 profiling 噪音
+   - 保留描述 / tags / relations / 少量示例值
+2. 基于 schema_cards 做 SQL 编排（非直接生成）
+3. 再引入 Embedding / Qdrant
+4. 最后接 LLM Adapter
 
 
 
