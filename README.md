@@ -20,7 +20,7 @@ sql-orchestrator 是一个基于 Python 的后端服务，用于将用户的自�
 
 ### 环境&启动
 
-- 开发环境
+- 开发环境 python3.8+
 
 ```shell
 # 创建并激活虚拟环境
