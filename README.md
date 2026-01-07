@@ -16,3 +16,26 @@ sql-orchestrator 是一个基于 Python 的后端服务，用于将用户的自�
 - 在信息不充分时发起结构化追问
 
 - 输出 SQL 及其生成依据（explanation）
+
+
+### 环境&启动
+
+- 开发环境
+
+```shell
+# 创建并激活虚拟环境
+python3 -m venv .venv
+source .venv/bin/activate
+
+# 安装依赖
+pip install -r requirements.txt
+
+```
+
+- 启动命令
+
+```shell
+
+uvicorn sql_orchestrator.main:app --reload --port 10072
+
+```
