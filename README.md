@@ -39,3 +39,59 @@ pip install -r requirements.txt
 uvicorn sql_orchestrator.main:app --reload --port 10072
 
 ```
+
+### 测试数据
+
+- 启动mariadb
+
+```shell
+docker network create infra-net
+
+docker run -d \
+  --name mariadb \
+  --network infra-net \
+  --restart unless-stopped \
+  -p 3306:3306 \
+  -e MYSQL_ROOT_PASSWORD=123456 \
+  -v mariadb-data:/var/lib/mysql \
+  -v mariadb-config:/etc/mysql/conf.d \
+  mariadb:10.11
+
+```
+
+- 初始化测试数据
+
+```shell
+
+docker exec -i mariadb mariadb -uroot -p123456 < 001_schema.sql
+docker exec -i mariadb mariadb -uroot -p123456 < 002_seed.sql
+
+
+```
+
+- 检查数据分布
+
+```shell
+003_chcek.sql
+```
+
+### 抽取 Cards
+
+```shell
+# 抽取
+pytest tests/test_export_schema_cards.py -s
+
+# 校验 schema
+# 注释 ref 写错、表名/字段名拼错，立即爆出来
+# join 写成 n:1 或 N-1 这种不规范，直接报错
+# role 缺失给 warning（不影响导出，但提醒你补）
+pytest tests/test_validate_schema_cards.py -s
+
+
+# 校验 Join Path 可达性校验
+# 能否通过 relations 连通到所有 dimension
+# 是否存在 孤立维表
+# 是否存在 断链字段（ref 正确，但整体不可达）
+pytest tests/test_validate_join_cards.py -s
+
+```
